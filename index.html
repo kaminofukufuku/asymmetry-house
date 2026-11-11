@@ -1,0 +1,1395 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>ふくふくハウジング (屋根ズレ・ドラッグ変形対応版)</title>
+    <!-- Three.js (3Dプレビュー用) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/DragControls.js"></script>
+    
+    <style>
+        .papercraft-app { font-family: sans-serif; background-color: transparent; padding: 0; box-sizing: border-box; }
+        .app-layout { display: flex; flex-direction: column; gap: 10px; max-width: 100%; margin: 0 auto; }
+        .controls { background: #f8f9fa; padding: 10px 15px; border-radius: 6px; border: 1px solid #ddd; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .control-group { display: flex; flex-direction: column; }
+        .papercraft-app label { font-size: 11px; color: #555; font-weight: bold; margin-bottom: 3px; }
+        .papercraft-app input, .papercraft-app select { width: 65px; margin-top: 0; padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+        .papercraft-app select { width: auto; cursor: pointer; }
+        
+        .btn-group { display: flex; margin-top: 0; flex: 1; gap: 6px; flex-wrap: wrap; align-items: flex-end; justify-content: flex-start; }
+        .papercraft-app button { padding: 6px 10px; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; width: auto; font-size: 11px; transition: background-color 0.2s; white-space: nowrap; flex: 0 1 auto;}
+        .btn-pdf { background-color: #28a745; }
+        .btn-pdf:hover { background-color: #218838; }
+        .btn-win { background-color: #007bff; }
+        .btn-door { background-color: #17a2b8; }
+        .btn-dup { background-color: #ffc107; color: #333 !important; }
+        .btn-del { background-color: #dc3545; }
+        
+        .dimension-info { background: #e9ecef; padding: 10px 15px; border-radius: 6px; border: 1px solid #ddd; font-size: 13px; color: #333; font-weight: bold; }
+        
+        .view-container { display: flex; gap: 10px; flex-wrap: wrap; }
+        .view-box { flex: 1; min-width: 280px; background: white; padding: 10px; border-radius: 6px; border: 1px solid #ddd; }
+        .view-title { margin-top: 0; font-size: 13px; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px; color: #333; font-weight: bold;}
+        
+        #svg-preview { width: 100%; height: 620px; overflow: auto; background-color: #fafafa; border: 1px dashed #ccc; user-select: none; position: relative; }
+        #svg-preview svg { background-color: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin: 5px; display: block; }
+        #canvas-container { width: 100%; height: 620px; background-color: #e0e0e0; border-radius: 4px; overflow: hidden; position: relative; }
+        #canvas-container canvas { display: block; outline: none; }
+        
+        .canvas-overlay { position: absolute; top: 10px; left: 10px; pointer-events: none; color: #333; background: rgba(255,255,255,0.8); padding: 5px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; line-height: 1.4; z-index: 10; }
+
+        .delete-group { cursor: pointer; }
+        .delete-group .delete-icon { fill: #dc3545; }
+        .delete-group:hover .delete-icon { fill: #a71d2a; }
+
+        .window-rect, .resize-handle, .move-handle, .delete-btn { touch-action: none; }
+
+        @media print {
+            .print-hidden { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="papercraft-app">
+    <div class="app-layout">
+        <div class="controls">
+            <div class="control-group">
+                <label>奥行き (mm)</label>
+                <input type="number" step="1" id="pc-width" value="50" onchange="updateAll()">
+            </div>
+            <div class="control-group">
+                <label>幅 (mm)</label>
+                <input type="number" step="1" id="pc-depth" value="60" onchange="updateAll()">
+            </div>
+            <div class="control-group">
+                <label>壁高 (mm)</label>
+                <input type="number" step="1" id="pc-wallHeight" value="40" onchange="updateAll()">
+            </div>
+            <div class="control-group">
+                <label>屋根高 (mm)</label>
+                <input type="number" step="1" id="pc-roofHeight" value="30" onchange="updateAll()">
+            </div>
+            <div class="control-group">
+                <label>屋根ズレ (mm)</label>
+                <input type="number" step="1" id="pc-roofOffset" value="0" onchange="updateAll()">
+            </div>
+
+            <div class="control-group">
+                <label>表示倍率</label>
+                <select id="zoom-level" onchange="updateAll()">
+                    <option value="fit" selected>全体</option>
+                    <option value="0.5">50%</option>
+                    <option value="0.75">75%</option>
+                    <option value="1">100%</option>
+                    <option value="1.25">125%</option>
+                    <option value="1.5">150%</option>
+                    <option value="2">200%</option>
+                    <option value="2.5">250%</option>
+                    <option value="3">300%</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>窓形状</label>
+                <select id="win-shape">
+                    <option value="rect">長方形</option>
+                    <option value="diamond">ひし形</option>
+                    <option value="grid2x2">2x2小窓</option>
+                    <option value="round-top">上部丸</option>
+                    <option value="circle">円・楕円</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>ドア形状</label>
+                <select id="door-shape">
+                    <option value="rect">長方形</option>
+                    <option value="round-top">上部丸</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>ドア蝶番</label>
+                <select id="door-dir">
+                    <option value="right">右</option>
+                    <option value="left">左</option>
+                    <option value="bottom">下</option>
+                </select>
+            </div>
+            
+            <div class="btn-group">
+                <button class="btn-win" onclick="addWindow()">窓を追加</button>
+                <button class="btn-door" onclick="addDoor()">ドアを追加</button>
+                <button class="btn-dup" onclick="duplicateLast()">複製 (最後)</button>
+                <button class="btn-del" onclick="removeLastWindow()">削除 (最後)</button>
+                
+                <select id="export-format">
+                    <option value="pdf">印刷 / PDF</option>
+                    <option value="svg">SVG (Illustrator)</option>
+                    <option value="dxf">DXF (CAD)</option>
+                </select>
+                <button id="btn-export" class="btn-pdf" onclick="executeExport()">出力</button>
+            </div>
+        </div>
+
+        <div class="dimension-info">
+            📐 展開図寸法 (タテ×ヨコ): <span id="flat-size">-</span> mm &nbsp;&nbsp;|&nbsp;&nbsp; 🏠 完成寸法 (奥ゆき×幅×高さ): <span id="assembled-size">-</span> mm
+        </div>
+
+        <div class="view-container">
+            <div class="view-box">
+                <h3 class="view-title">📄 展開図 (ドラッグ移動・右下拡大・クリック回転・左上×で削除)</h3>
+                <div id="svg-preview"></div>
+            </div>
+
+            <div class="view-box">
+                <h3 class="view-title">🧊 完成イメージ (3D)</h3>
+                <div id="canvas-container">
+                    <div class="canvas-overlay">🔴: サイズ変更 / 🔵: 屋根高さ・ズレ変更</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let scene, camera, renderer, houseGroup, controls;
+    let dragControls, handleSize, handleRoof;
+    let is3DInitialized = false;
+    let windows = []; 
+    let dragInfo = { index: -1, mode: null, offsetX: 0, offsetY: 0, startW: 0, startH: 0, startClientX: 0, startClientY: 0 };
+    let snapGuides = { x: [], y: [] }; 
+    
+    let lastWinSize = { w: 15, h: 15 };
+    let lastDoorSize = { w: 16, h: 24 };
+
+    function checkPlacement(win) {
+        const w = Math.max(1, parseFloat(document.getElementById('pc-width').value) || 1);
+        const d = Math.max(1, parseFloat(document.getElementById('pc-depth').value) || 1);
+        const h = Math.max(1, parseFloat(document.getElementById('pc-wallHeight').value) || 1);
+        const rh = Math.max(1, parseFloat(document.getElementById('pc-roofHeight').value) || 1);
+        const rz = parseFloat(document.getElementById('pc-roofOffset').value) || 0;
+        const g = 5;
+        
+        const dF = d/2 - rz;
+        const dB = d/2 + rz;
+        const rLenF = Math.sqrt(dF*dF + rh*rh);
+        const rLenB = Math.sqrt(dB*dB + rh*rh);
+        const max_rl = Math.max(rLenF, rLenB);
+
+        const rl_1 = rLenB;
+        const rl_3 = rLenF;
+        let cutDY_1 = g * (rh / Math.max(0.1, dB)) + 2; 
+        let cutDY_3 = g * (rh / Math.max(0.1, dF)) + 2; 
+
+        const xLeft = g;
+        const xW1 = xLeft + w;
+        const xW2 = xW1 + d;
+        const xW3 = xW2 + w;
+        const xW4 = xW3 + d;
+        const yRoofTop1 = max_rl - rl_1 + g;
+        const yRoofTop3 = max_rl - rl_3 + g;
+        const yWallTop = g + max_rl;
+        const yBottom = yWallTop + h;
+
+        function checkPoint(px, py) {
+            let eps = 0.01;
+            
+            let inFace1 = (px >= xLeft - eps && px <= xW1 + eps && py >= yRoofTop1 - eps && py <= yBottom + eps);
+            let inFace2 = (px >= xW1 - eps && px <= xW2 + eps && py <= yBottom + eps && 
+                           py >= yWallTop - (px - xW1)*(rh/Math.max(0.1, dB)) - eps && 
+                           py >= yWallTop - (xW2 - px)*(rh/Math.max(0.1, dF)) - eps);
+            let inFace3 = (px >= xW2 - eps && px <= xW3 + eps && py >= yRoofTop3 - eps && py <= yBottom + eps);
+            let inFace4 = (px >= xW3 - eps && px <= xW4 + eps && py <= yBottom + eps && 
+                           py >= yWallTop - (px - xW3)*(rh/Math.max(0.1, dF)) - eps && 
+                           py >= yWallTop - (xW4 - px)*(rh/Math.max(0.1, dB)) - eps);
+
+            let inTabF1Top = (px >= xLeft - eps && px <= xW1 + eps && py >= yRoofTop1 - g - eps && py <= yRoofTop1 + eps);
+            let inTabF1LeftR = (px >= xLeft - g - eps && px <= xLeft + eps && py >= yRoofTop1 + g - eps && py <= yWallTop - cutDY_1 + eps);
+            let inTabF1RightR = (px >= xW1 - eps && px <= xW1 + g + eps && py >= yRoofTop1 + g - eps && py <= yWallTop - cutDY_1 + eps);
+            let inTabF3LeftR = (px >= xW2 - g - eps && px <= xW2 + eps && py >= yRoofTop3 + g - eps && py <= yWallTop - cutDY_3 + eps);
+            let inTabF3RightR = (px >= xW3 - eps && px <= xW3 + g + eps && py >= yRoofTop3 + g - eps && py <= yWallTop - cutDY_3 + eps);
+            let inTabF4RightW = (px >= xW4 - eps && px <= xW4 + g + eps && py >= yWallTop + g - eps && py <= yBottom - g + eps);
+
+            if (inTabF1Top || inTabF1LeftR || inTabF1RightR || inTabF3LeftR || inTabF3RightR || inTabF4RightW) {
+                return 'TAB';
+            }
+
+            if (!inFace1 && !inFace2 && !inFace3 && !inFace4) {
+                return 'OUT';
+            }
+
+            if (inFace1 && px <= xLeft + g + eps && py >= yWallTop - eps) return 'TAB';
+            if (inFace3 && py <= yRoofTop3 + g + eps) return 'TAB';
+            
+            if (inFace2 && py <= yWallTop + eps) {
+                let dB_eff = Math.max(0.1, dB);
+                let dF_eff = Math.max(0.1, dF);
+                let distL = (rh * (px - xW1) + dB_eff * (py - yWallTop)) / Math.sqrt(rh*rh + dB_eff*dB_eff);
+                let distR = (rh * (xW2 - px) + dF_eff * (py - yWallTop)) / Math.sqrt(rh*rh + dF_eff*dF_eff);
+                if (distL <= g + eps) return 'TAB';
+                if (distR <= g + eps) return 'TAB';
+            }
+            if (inFace4 && py <= yWallTop + eps) {
+                let dF_eff = Math.max(0.1, dF);
+                let dB_eff = Math.max(0.1, dB);
+                let distL = (rh * (px - xW3) + dF_eff * (py - yWallTop)) / Math.sqrt(rh*rh + dF_eff*dF_eff);
+                let distR = (rh * (xW4 - px) + dB_eff * (py - yWallTop)) / Math.sqrt(rh*rh + dB_eff*dB_eff);
+                if (distL <= g + eps) return 'TAB';
+                if (distR <= g + eps) return 'TAB';
+            }
+
+            return 'OK';
+        }
+
+        const rot = (win.rotation || 0) % 180;
+        const bboxW = rot === 0 ? win.w : win.h;
+        const bboxH = rot === 0 ? win.h : win.w;
+        const bx = win.x + win.w / 2 - bboxW / 2;
+        const by = win.y + win.h / 2 - bboxH / 2;
+
+        let pts = [];
+        let steps = 10;
+        for (let i = 0; i <= steps; i++) {
+            for (let j = 0; j <= steps; j++) {
+                pts.push({x: bx + bboxW * (i/steps), y: by + bboxH * (j/steps)});
+            }
+        }
+        
+        let hasOut = false;
+        let hasTab = false;
+
+        for (let pt of pts) {
+            let s = checkPoint(pt.x, pt.y);
+            if (s === 'OUT') hasOut = true;
+            if (s === 'TAB') hasTab = true;
+        }
+
+        if (hasOut) return 'OUT';
+        if (hasTab) return 'TAB';
+        return 'OK';
+    }
+
+    function getBBox(win) {
+        const rot = (win.rotation || 0) % 180;
+        const bboxW = rot === 0 ? win.w : win.h;
+        const bboxH = rot === 0 ? win.h : win.w;
+        const bboxX = win.x + win.w / 2 - bboxW / 2;
+        const bboxY = win.y + win.h / 2 - bboxH / 2;
+        return {
+            x: bboxX,
+            y: bboxY,
+            w: bboxW,
+            h: bboxH,
+            cx: bboxX + bboxW / 2,
+            cy: bboxY + bboxH / 2,
+            right: bboxX + bboxW,
+            bottom: bboxY + bboxH
+        };
+    }
+
+    function addWindow() {
+        const winW = lastWinSize.w;
+        const winH = lastWinSize.h;
+        const shape = document.getElementById('win-shape').value;
+        const w = Math.max(1, parseFloat(document.getElementById('pc-width').value) || 1);
+        const d = Math.max(1, parseFloat(document.getElementById('pc-depth').value) || 1);
+        const h = Math.max(1, parseFloat(document.getElementById('pc-wallHeight').value) || 1);
+        const rh = Math.max(1, parseFloat(document.getElementById('pc-roofHeight').value) || 1);
+        const rz = parseFloat(document.getElementById('pc-roofOffset').value) || 0;
+        const g = 5;
+        
+        const dF = d/2 - rz;
+        const dB = d/2 + rz;
+        const rLenF = Math.sqrt(dF*dF + rh*rh);
+        const rLenB = Math.sqrt(dB*dB + rh*rh);
+        const max_rl = Math.max(rLenF, rLenB);
+
+        const startX = g + w + d + (w / 2) - (winW / 2);
+        const startY = g + max_rl + (h / 2) - (winH / 2);
+        const proposed = { type: 'window', shape: shape, w: winW, h: winH, x: startX, y: startY, rotation: 0 };
+        
+        if (checkPlacement(proposed) !== 'OUT') {
+            windows.push(proposed);
+        }
+        updateAll();
+    }
+
+    function addDoor() {
+        const winW = lastDoorSize.w;
+        const winH = lastDoorSize.h;
+        const shape = document.getElementById('door-shape').value;
+        const dir = document.getElementById('door-dir').value;
+        const w = Math.max(1, parseFloat(document.getElementById('pc-width').value) || 1);
+        const d = Math.max(1, parseFloat(document.getElementById('pc-depth').value) || 1);
+        const h = Math.max(1, parseFloat(document.getElementById('pc-wallHeight').value) || 1);
+        const rh = Math.max(1, parseFloat(document.getElementById('pc-roofHeight').value) || 1);
+        const rz = parseFloat(document.getElementById('pc-roofOffset').value) || 0;
+        const g = 5;
+        
+        const dF = d/2 - rz;
+        const dB = d/2 + rz;
+        const rLenF = Math.sqrt(dF*dF + rh*rh);
+        const rLenB = Math.sqrt(dB*dB + rh*rh);
+        const max_rl = Math.max(rLenF, rLenB);
+
+        const startX = g + w + d + (w / 2) - (winW / 2);
+        const startY = g + max_rl + h - winH;
+        const proposed = { type: 'door', shape: shape, dir: dir, w: winW, h: winH, x: startX, y: startY, rotation: 0 };
+        
+        if (checkPlacement(proposed) !== 'OUT') {
+            windows.push(proposed);
+        }
+        updateAll();
+    }
+    
+    function duplicateLast() {
+        if (windows.length === 0) return;
+        const last = windows[windows.length - 1];
+        let startX = last.x + 5;
+        let startY = last.y + 5;
+        const proposed = { type: last.type, shape: last.shape, dir: last.dir, w: last.w, h: last.h, x: startX, y: startY, rotation: last.rotation || 0 };
+        
+        if (checkPlacement(proposed) !== 'OUT') {
+            windows.push(proposed);
+        }
+        updateAll();
+    }
+
+    function removeLastWindow() {
+        if (windows.length > 0) {
+            windows.pop();
+            updateAll();
+        }
+    }
+
+    function deleteWindowAtIndex(idx) {
+        if (idx >= 0 && idx < windows.length) {
+            windows.splice(idx, 1);
+            updateAll();
+        }
+    }
+
+    function startDrag(e) {
+        let isControl = false;
+        let targetEl = null;
+
+        if (e.target && e.target.classList) {
+            if (e.target.classList.contains('delete-btn')) { isControl = true; targetEl = e.target; }
+            else if (e.target.classList.contains('resize-handle')) { isControl = true; targetEl = e.target; }
+            else if (e.target.classList.contains('window-rect')) { isControl = true; targetEl = e.target; }
+            else if (e.target.closest && e.target.closest('.move-handle')) { isControl = true; targetEl = e.target.closest('.move-handle'); }
+        }
+
+        if (!isControl) return;
+
+        if (e.cancelable) {
+            e.preventDefault();
+        }
+
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+        if (targetEl.classList.contains('delete-btn')) {
+            e.stopPropagation();
+            const idx = parseInt(targetEl.getAttribute('data-index'));
+            deleteWindowAtIndex(idx);
+            return;
+        }
+
+        if (targetEl.classList.contains('resize-handle')) {
+            e.stopPropagation();
+            dragInfo.index = parseInt(targetEl.getAttribute('data-index'));
+            dragInfo.mode = 'resize';
+            const svg = document.getElementById('papercraft-svg');
+            const CTM = svg.querySelector('g').getScreenCTM();
+            let win = windows[dragInfo.index];
+            
+            dragInfo.offsetX = (clientX - CTM.e) / CTM.a; 
+            dragInfo.offsetY = (clientY - CTM.f) / CTM.d; 
+            dragInfo.startW = win.w;
+            dragInfo.startH = win.h;
+            dragInfo.startClientX = clientX;
+            dragInfo.startClientY = clientY;
+        }
+        else if (targetEl.classList.contains('window-rect') || targetEl.classList.contains('move-handle')) {
+            dragInfo.index = parseInt(targetEl.getAttribute('data-index'));
+            dragInfo.mode = 'move';
+            const svg = document.getElementById('papercraft-svg');
+            const CTM = svg.querySelector('g').getScreenCTM();
+            let win = windows[dragInfo.index];
+            
+            dragInfo.offsetX = (clientX - CTM.e) / CTM.a - win.x;
+            dragInfo.offsetY = (clientY - CTM.f) / CTM.d - win.y;
+            dragInfo.startClientX = clientX;
+            dragInfo.startClientY = clientY;
+        }
+    }
+    
+    function moveDrag(e) {
+        if (dragInfo.index >= 0) {
+            if (e.cancelable) e.preventDefault();
+            const svg = document.getElementById('papercraft-svg');
+            const CTM = svg.querySelector('g').getScreenCTM();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            let currentMouseX = (clientX - CTM.e) / CTM.a;
+            let currentMouseY = (clientY - CTM.f) / CTM.d;
+            let win = windows[dragInfo.index];
+            
+            if (dragInfo.mode === 'move') {
+                let newX = currentMouseX - dragInfo.offsetX;
+                let newY = currentMouseY - dragInfo.offsetY;
+                
+                snapGuides = { x: [], y: [] };
+                const snapThreshold = 1;
+                
+                let curBox = getBBox({ ...win, x: newX, y: newY });
+
+                windows.forEach((otherWin, idx) => {
+                    if (idx === dragInfo.index) return;
+                    let oBox = getBBox(otherWin);
+
+                    const xAligns = [
+                        { cur: curBox.x, other: oBox.x, offset: 0 },
+                        { cur: curBox.x, other: oBox.right, offset: 0 },
+                        { cur: curBox.cx, other: oBox.cx, offset: curBox.w / 2 },
+                        { cur: curBox.right, other: oBox.x, offset: curBox.w },
+                        { cur: curBox.right, other: oBox.right, offset: curBox.w }
+                    ];
+
+                    for (let align of xAligns) {
+                        if (Math.abs(align.cur - align.other) < snapThreshold) {
+                            newX = align.other - (align.cur - curBox.x);
+                            snapGuides.x.push(align.other);
+                            break;
+                        }
+                    }
+
+                    const yAligns = [
+                        { cur: curBox.y, other: oBox.y, offset: 0 },
+                        { cur: curBox.y, other: oBox.bottom, offset: 0 },
+                        { cur: curBox.cy, other: oBox.cy, offset: curBox.h / 2 },
+                        { cur: curBox.bottom, other: oBox.y, offset: curBox.h },
+                        { cur: curBox.bottom, other: oBox.bottom, offset: curBox.h }
+                    ];
+
+                    for (let align of yAligns) {
+                        if (Math.abs(align.cur - align.other) < snapThreshold) {
+                            newY = align.other - (align.cur - curBox.y);
+                            snapGuides.y.push(align.other);
+                            break;
+                        }
+                    }
+                });
+
+                let proposed = { ...win, x: newX, y: newY };
+                
+                if (checkPlacement(proposed) !== 'OUT') {
+                    win.x = newX; win.y = newY;
+                } else {
+                    let statusX = checkPlacement({ ...win, x: newX });
+                    let statusY = checkPlacement({ ...win, y: newY });
+                    
+                    if (statusX !== 'OUT') { win.x = newX; }
+                    if (statusY !== 'OUT') { win.y = newY; }
+                }
+                if (is3DInitialized) { updateAll(); } else { generateSVG(); }
+
+            } else if (dragInfo.mode === 'resize') {
+                snapGuides = { x: [], y: [] };
+                let newW = dragInfo.startW + (currentMouseX - dragInfo.offsetX);
+                let newH = dragInfo.startH + (currentMouseY - dragInfo.offsetY);
+                if (win.shape === 'round-top') {
+                    newW = Math.max(4, newW);
+                    newH = Math.max(newW / 2 + 2, newH); 
+                } else if (win.shape === 'grid2x2') {
+                    newW = Math.max(6, newW);
+                    newH = Math.max(6, newH);
+                } else {
+                    newW = Math.max(3, newW);
+                    newH = Math.max(3, newH);
+                }
+                
+                let proposed = { ...win, w: newW, h: newH };
+                if (checkPlacement(proposed) !== 'OUT') {
+                    win.w = newW; win.h = newH;
+                    if (win.type === 'door') lastDoorSize = { w: newW, h: newH };
+                    else lastWinSize = { w: newW, h: newH };
+                }
+                if (is3DInitialized) { updateAll(); } else { generateSVG(); }
+            }
+        }
+    }
+    
+    function endDrag(e) { 
+        if (dragInfo.index >= 0 && dragInfo.mode === 'move') {
+            const clientX = e && e.changedTouches ? e.changedTouches[0].clientX : (e ? e.clientX : dragInfo.startClientX);
+            const clientY = e && e.changedTouches ? e.changedTouches[0].clientY : (e ? e.clientY : dragInfo.startClientY);
+            const dist = Math.hypot(clientX - dragInfo.startClientX, clientY - dragInfo.startClientY);
+            
+            if (dist < 5) {
+                let win = windows[dragInfo.index];
+                let proposed = { ...win, rotation: ((win.rotation || 0) + 270) % 360 };
+                if (checkPlacement(proposed) !== 'OUT') {
+                    win.rotation = proposed.rotation;
+                }
+            }
+        }
+        dragInfo.index = -1; 
+        dragInfo.mode = null; 
+        snapGuides = { x: [], y: [] };
+        updateAll();
+    }
+
+    document.addEventListener('mousedown', startDrag, { passive: false });
+    document.addEventListener('mousemove', moveDrag, { passive: false });
+    document.addEventListener('mouseup', endDrag);
+    document.addEventListener('touchstart', startDrag, { passive: false });
+    document.addEventListener('touchmove', moveDrag, { passive: false });
+    document.addEventListener('touchend', endDrag);
+
+    function checkAndInit() {
+        if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined') {
+            try { init3D(); } catch (e) { console.error("3D初期化エラー:", e); }
+            updateAll();
+        } else {
+            setTimeout(checkAndInit, 100);
+        }
+    }
+    checkAndInit();
+
+    function updateAll() {
+        const wInput = document.getElementById('pc-width');
+        const dInput = document.getElementById('pc-depth');
+        const hInput = document.getElementById('pc-wallHeight');
+        const rhInput = document.getElementById('pc-roofHeight');
+        const rzInput = document.getElementById('pc-roofOffset');
+        
+        const w = Math.max(1, parseFloat(wInput.value) || 1);
+        const d = Math.max(1, parseFloat(dInput.value) || 1);
+        const h = Math.max(1, parseFloat(hInput.value) || 1);
+        const rh = Math.max(1, parseFloat(rhInput.value) || 1);
+        const rz = parseFloat(rzInput.value) || 0;
+
+        const g = 5;
+        const rLenF = Math.sqrt(Math.pow(d/2 - rz, 2) + rh*rh);
+        const rLenB = Math.sqrt(Math.pow(d/2 + rz, 2) + rh*rh);
+        const max_rl = Math.max(rLenF, rLenB);
+        
+        const flatW = g + 2 * w + 2 * d; 
+        const flatH = g + max_rl + h;
+        const totalH = h + rh;
+
+        const flatSizeEl = document.getElementById('flat-size');
+        const assembledSizeEl = document.getElementById('assembled-size');
+        if(flatSizeEl) flatSizeEl.innerText = `${flatH.toFixed(1)} × ${flatW.toFixed(1)}`;
+        if(assembledSizeEl) assembledSizeEl.innerText = `${d.toFixed(1)} × ${w.toFixed(1)} × ${totalH.toFixed(1)}`;
+
+        try { generateSVG(); } 
+        catch (e) { document.getElementById('svg-preview').innerHTML = "<p style='color:red;'>展開図の生成に失敗しました。</p>"; }
+
+        try { if (is3DInitialized) update3D(); } 
+        catch (e) { console.error("3D更新エラー:", e); }
+    }
+
+    function getTransformedPoints(win) {
+        const cx = win.x + win.w / 2;
+        const cy = win.y + win.h / 2;
+        const rad = ((win.rotation || 0) * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+
+        function rot(px, py) {
+            const dx = px - cx;
+            const dy = py - cy;
+            return {
+                x: cx + dx * cos - dy * sin,
+                y: cy + dx * sin + dy * cos
+            };
+        }
+
+        let mainPts = [];
+        let hingePts = [];
+        let extraPaths = [];
+
+        if (win.shape === 'diamond') {
+            let rawMain = [
+                { x: cx, y: win.y },
+                { x: win.x + win.w, y: cy },
+                { x: cx, y: win.y + win.h },
+                { x: win.x, y: cy },
+                { x: cx, y: win.y }
+            ];
+            mainPts = rawMain.map(p => rot(p.x, p.y));
+        } else if (win.shape === 'grid2x2') {
+            const wx = win.x, wy = win.y, ww = win.w, wh = win.h;
+            const gap = Math.min(Math.min(ww, wh) * 0.3, Math.max(0.8, Math.min(ww, wh) * 0.12));
+            const cellW = (ww - gap) / 2;
+            const cellH = (wh - gap) / 2;
+
+            if (cellW > 0 && cellH > 0) {
+                const rects = [
+                    { x: wx, y: wy },
+                    { x: wx + cellW + gap, y: wy },
+                    { x: wx, y: wy + cellH + gap },
+                    { x: wx + cellW + gap, y: wy + cellH + gap }
+                ];
+
+                rects.forEach((r, idx) => {
+                    let pts = [
+                        {x: r.x, y: r.y},
+                        {x: r.x + cellW, y: r.y},
+                        {x: r.x + cellW, y: r.y + cellH},
+                        {x: r.x, y: r.y + cellH},
+                        {x: r.x, y: r.y}
+                    ].map(p => rot(p.x, p.y));
+
+                    if (idx === 0) {
+                        mainPts = pts;
+                    } else {
+                        extraPaths.push(pts);
+                    }
+                });
+            }
+        } else if (win.shape === 'circle') {
+            const rx = win.w / 2;
+            const ry = win.h / 2;
+            let rawMain = [];
+            const steps = 32;
+            for (let i = 0; i <= steps; i++) {
+                const theta = (i / steps) * 2 * Math.PI;
+                rawMain.push({
+                    x: cx + rx * Math.cos(theta),
+                    y: cy + ry * Math.sin(theta)
+                });
+            }
+            mainPts = rawMain.map(p => rot(p.x, p.y));
+        } else if (win.shape === 'round-top') {
+            const r = win.w / 2;
+            let rawMain = [];
+            let rawHinge = [];
+
+            if (win.type === 'door') {
+                if (win.dir === 'left') {
+                    rawMain.push({x: win.x, y: win.y+win.h}, {x: win.x+win.w, y: win.y+win.h}, {x: win.x+win.w, y: win.y+r});
+                    for(let i=0; i<=16; i++){
+                        const theta = (i/16) * Math.PI;
+                        rawMain.push({ x: win.x + r + r * Math.cos(theta), y: win.y + r - r * Math.sin(theta) }); 
+                    }
+                    rawHinge.push({x: win.x, y: win.y+r}, {x: win.x, y: win.y+win.h});
+                } else if (win.dir === 'right') {
+                    rawMain.push({x: win.x+win.w, y: win.y+win.h}, {x: win.x, y: win.y+win.h}, {x: win.x, y: win.y+r});
+                    for(let i=0; i<=16; i++){
+                        const theta = Math.PI - (i/16) * Math.PI; 
+                        rawMain.push({ x: win.x + r + r * Math.cos(theta), y: win.y + r - r * Math.sin(theta) }); 
+                    }
+                    rawHinge.push({x: win.x+win.w, y: win.y+r}, {x: win.x+win.w, y: win.y+win.h});
+                } else { 
+                    rawMain.push({x: win.x, y: win.y+win.h}, {x: win.x, y: win.y+r});
+                    for(let i=0; i<=16; i++){
+                        const theta = Math.PI - (i/16) * Math.PI; 
+                        rawMain.push({ x: win.x + r + r * Math.cos(theta), y: win.y + r - r * Math.sin(theta) }); 
+                    }
+                    rawMain.push({x: win.x+win.w, y: win.y+win.h});
+                    rawHinge.push({x: win.x, y: win.y+win.h}, {x: win.x+win.w, y: win.y+win.h});
+                }
+            } else { 
+                rawMain.push({x: win.x, y: win.y+win.h}, {x: win.x+win.w, y: win.y+win.h}, {x: win.x+win.w, y: win.y+r});
+                for(let i=0; i<=16; i++){
+                    const theta = (i/16) * Math.PI;
+                    rawMain.push({ x: win.x + r + r * Math.cos(theta), y: win.y + r - r * Math.sin(theta) }); 
+                }
+                rawMain.push({x: win.x, y: win.y+win.h});
+            }
+
+            mainPts = rawMain.map(p => rot(p.x, p.y));
+            hingePts = rawHinge.map(p => rot(p.x, p.y));
+        } else { 
+            let rawMain = [];
+            let rawHinge = [];
+
+            if (win.type === 'door') {
+                if (win.dir === 'left') {
+                    rawMain.push({x: win.x, y: win.y+win.h}, {x: win.x+win.w, y: win.y+win.h}, {x: win.x+win.w, y: win.y}, {x: win.x, y: win.y});
+                    rawHinge.push({x: win.x, y: win.y}, {x: win.x, y: win.y+win.h});
+                } else if (win.dir === 'right') {
+                    rawMain.push({x: win.x+win.w, y: win.y+win.h}, {x: win.x, y: win.y+win.h}, {x: win.x, y: win.y}, {x: win.x+win.w, y: win.y});
+                    rawHinge.push({x: win.x+win.w, y: win.y}, {x: win.x+win.w, y: win.y+win.h});
+                } else { 
+                    rawMain.push({x: win.x, y: win.y+win.h}, {x: win.x, y: win.y}, {x: win.x+win.w, y: win.y}, {x: win.x+win.w, y: win.y+win.h});
+                    rawHinge.push({x: win.x, y: win.y+win.h}, {x: win.x+win.w, y: win.y+win.h});
+                }
+            } else { 
+                rawMain = [
+                    {x: win.x, y: win.y}, {x: win.x+win.w, y: win.y}, 
+                    {x: win.x+win.w, y: win.y+win.h}, {x: win.x, y: win.y+win.h}, {x: win.x, y: win.y}
+                ];
+            }
+
+            mainPts = rawMain.map(p => rot(p.x, p.y));
+            hingePts = rawHinge.map(p => rot(p.x, p.y));
+        }
+
+        return { mainPts, hingePts, extraPaths };
+    }
+
+    function generateSVG() {
+        const wInput = document.getElementById('pc-width');
+        const dInput = document.getElementById('pc-depth');
+        const hInput = document.getElementById('pc-wallHeight');
+        const rhInput = document.getElementById('pc-roofHeight');
+        const zoomStr = document.getElementById('zoom-level') ? document.getElementById('zoom-level').value : 'fit';
+        const isFit = (zoomStr === 'fit');
+        const zoom = parseFloat(zoomStr) || 1;
+        const g = 5;
+
+        const w = Math.max(1, parseFloat(wInput.value) || 1);
+        const d = Math.max(1, parseFloat(dInput.value) || 1);
+        const h = Math.max(1, parseFloat(hInput.value) || 1);
+        const rh = Math.max(1, parseFloat(rhInput.value) || 1);
+        const rz = parseFloat(document.getElementById('pc-roofOffset').value) || 0;
+
+        const dF = d/2 - rz;
+        const dB = d/2 + rz;
+        const rLenF = Math.sqrt(dF*dF + rh*rh);
+        const rLenB = Math.sqrt(dB*dB + rh*rh);
+        const max_rl = Math.max(rLenF, rLenB);
+
+        const rl_1 = rLenB; 
+        const rl_3 = rLenF; 
+        let cutDY_1 = g * (rh / Math.max(0.1, dB)) + 2; 
+        let cutDY_3 = g * (rh / Math.max(0.1, dF)) + 2; 
+
+        const xLeft = g;
+        const xW1 = xLeft + w;
+        const xW2 = xW1 + d;
+        const xW3 = xW2 + w;
+        const xW4 = xW3 + d;
+
+        const yRoofTop1 = max_rl - rl_1 + g;
+        const yRoofTop3 = max_rl - rl_3 + g;
+        const yWallTop = g + max_rl;          
+        const yBottom = yWallTop + h;        
+        const yTrianglePeak = yWallTop - rh; 
+
+        const peak2_x = xW1 + d/2 + rz;
+        const peak4_x = xW3 + d/2 - rz;
+
+        const cutPath = `
+            M ${xLeft} ${yBottom} L ${xLeft} ${yWallTop}
+            L ${xLeft - g} ${yWallTop - cutDY_1} L ${xLeft - g} ${yRoofTop1 + g}
+            L ${xLeft} ${yRoofTop1} L ${xLeft + g} ${yRoofTop1 - g} L ${xW1 - g} ${yRoofTop1 - g}
+            L ${xW1} ${yRoofTop1} L ${xW1 + g} ${yRoofTop1 + g}
+            L ${xW1 + g} ${yWallTop - cutDY_1} L ${xW1} ${yWallTop}
+            L ${peak2_x} ${yTrianglePeak} L ${xW2} ${yWallTop}
+            L ${xW2 - g} ${yWallTop - cutDY_3} L ${xW2 - g} ${yRoofTop3 + g}
+            L ${xW2} ${yRoofTop3} L ${xW3} ${yRoofTop3}
+            L ${xW3 + g} ${yRoofTop3 + g}
+            L ${xW3 + g} ${yWallTop - cutDY_3} L ${xW3} ${yWallTop}
+            L ${peak4_x} ${yTrianglePeak} L ${xW4} ${yWallTop}
+            L ${xW4 + g} ${yWallTop + g} L ${xW4 + g} ${yBottom - g}
+            L ${xW4} ${yBottom} Z
+        `;
+
+        const foldPath = `
+            M ${xW1} ${yBottom} L ${xW1} ${yWallTop} M ${xW2} ${yBottom} L ${xW2} ${yWallTop}
+            M ${xW3} ${yBottom} L ${xW3} ${yWallTop} M ${xW4} ${yBottom} L ${xW4} ${yWallTop}
+            M ${xLeft} ${yWallTop} L ${xW1} ${yWallTop} M ${xW2} ${yWallTop} L ${xW3} ${yWallTop}
+            M ${xLeft} ${yRoofTop1} L ${xLeft} ${yWallTop} M ${xW1} ${yRoofTop1} L ${xW1} ${yWallTop}
+            M ${xW2} ${yRoofTop3} L ${xW2} ${yWallTop} M ${xW3} ${yRoofTop3} L ${xW3} ${yWallTop}
+            M ${xLeft} ${yRoofTop1} L ${xW1} ${yRoofTop1}
+        `;
+
+        let windowSVG = "";
+        windows.forEach((win, index) => {
+            const { mainPts, hingePts, extraPaths } = getTransformedPoints(win);
+
+            function ptsToD(pts) {
+                if (!pts || pts.length === 0) return "";
+                let d = `M ${pts[0].x} ${pts[0].y}`;
+                for (let i = 1; i < pts.length; i++) {
+                    d += ` L ${pts[i].x} ${pts[i].y}`;
+                }
+                return d;
+            }
+
+            if (mainPts.length > 0) {
+                windowSVG += `<path d="${ptsToD(mainPts)}" fill="none" stroke="black" stroke-width="1" />`;
+            }
+            if (hingePts && hingePts.length > 0) {
+                windowSVG += `<path d="${ptsToD(hingePts)}" fill="none" stroke="magenta" stroke-width="1" />`;
+            }
+            if (extraPaths && extraPaths.length > 0) {
+                extraPaths.forEach(p => {
+                    windowSVG += `<path d="${ptsToD(p)}" fill="none" stroke="black" stroke-width="1" />`;
+                });
+            }
+
+            const rot = (win.rotation || 0) % 180;
+            const bboxW = rot === 0 ? win.w : win.h;
+            const bboxH = rot === 0 ? win.h : win.w;
+            const bboxX = win.x + win.w / 2 - bboxW / 2;
+            const bboxY = win.y + win.h / 2 - bboxH / 2;
+
+            const cx = bboxX + bboxW / 2;
+            const cy = bboxY + bboxH / 2;
+
+            windowSVG += `<rect class="window-rect print-hidden" data-index="${index}" x="${bboxX}" y="${bboxY}" width="${bboxW}" height="${bboxH}" fill="transparent" stroke="none" style="pointer-events:all; cursor:move;" />`;
+            
+            windowSVG += `<g class="move-handle print-hidden" data-index="${index}" style="pointer-events:all; cursor:move;">
+                <circle cx="${cx}" cy="${cy}" r="6" fill="rgba(255,255,255,0.7)" stroke="#666" stroke-width="0.5" style="pointer-events:none;"/>
+                <path d="M ${cx} ${cy-3.5} L ${cx} ${cy+3.5} M ${cx-3.5} ${cy} L ${cx+3.5} ${cy}" stroke="#333" stroke-width="1.5" stroke-linecap="round" style="pointer-events:none;"/>
+            </g>`;
+
+            windowSVG += `<rect class="resize-handle print-hidden" data-index="${index}" x="${bboxX + bboxW - 3}" y="${bboxY + bboxH - 3}" width="6" height="6" fill="white" stroke="black" stroke-width="0.5" style="pointer-events:all; cursor:se-resize;" />`;
+            
+            windowSVG += `<g class="delete-group print-hidden" style="pointer-events:all;">
+                <circle class="delete-btn delete-icon" data-index="${index}" cx="${bboxX}" cy="${bboxY}" r="3.5" style="pointer-events:all;" />
+                <line x1="${bboxX - 1.8}" y1="${bboxY - 1.8}" x2="${bboxX + 1.8}" y2="${bboxY + 1.8}" stroke="white" stroke-width="0.8" style="pointer-events:none;" />
+                <line x1="${bboxX + 1.8}" y1="${bboxY - 1.8}" x2="${bboxX - 1.8}" y2="${bboxY + 1.8}" stroke="white" stroke-width="0.8" style="pointer-events:none;" />
+            </g>`;
+        });
+
+        const vBoxWidth = xW4 + g + 20;
+        const vBoxHeight = yBottom + 20;
+
+        let guideLinesSVG = "";
+        if (snapGuides.x && snapGuides.x.length > 0) {
+            snapGuides.x.forEach(sx => {
+                guideLinesSVG += `<line class="snap-guide print-hidden" x1="${sx}" y1="0" x2="${sx}" y2="${vBoxHeight}" stroke="#007bff" stroke-width="0.5" stroke-dasharray="2 2" />`;
+            });
+        }
+        if (snapGuides.y && snapGuides.y.length > 0) {
+            snapGuides.y.forEach(sy => {
+                guideLinesSVG += `<line class="snap-guide print-hidden" x1="0" y1="${sy}" x2="${vBoxWidth}" y2="${sy}" stroke="#007bff" stroke-width="0.5" stroke-dasharray="2 2" />`;
+            });
+        }
+
+        let sizeAttr = "";
+        if (isFit) {
+            sizeAttr = `width="100%" height="100%" style="max-width: 100%; max-height: 100%;"`;
+        } else {
+            const dispWidth = vBoxWidth * zoom;
+            const dispHeight = vBoxHeight * zoom;
+            sizeAttr = `width="${dispWidth}mm" height="${dispHeight}mm"`;
+        }
+
+        const svgContent = `
+            <svg id="papercraft-svg" xmlns="http://www.w3.org/2000/svg" 
+                 ${sizeAttr} viewBox="0 0 ${vBoxWidth} ${vBoxHeight}">
+                <g transform="translate(10, 10)">
+                    <path d="${cutPath}" fill="none" stroke="black" stroke-width="0.5" stroke-linejoin="round"/>
+                    <path d="${foldPath}" fill="none" stroke="red" stroke-width="0.5" />
+                    ${windowSVG}
+                    ${guideLinesSVG}
+                </g>
+            </svg>
+        `;
+        document.getElementById('svg-preview').innerHTML = svgContent;
+    }
+
+    function executeExport() {
+        const format = document.getElementById('export-format').value;
+        if (format === 'pdf') {
+            printToPDF();
+        } else if (format === 'svg') {
+            exportSVG();
+        } else if (format === 'dxf') {
+            exportDXF();
+        }
+    }
+
+    function exportSVG() {
+        const zoomSelect = document.getElementById('zoom-level');
+        const prevZoom = zoomSelect ? zoomSelect.value : '1';
+        if (zoomSelect) zoomSelect.value = '1';
+        snapGuides = { x: [], y: [] };
+        generateSVG();
+
+        const svgElement = document.getElementById('papercraft-svg');
+        if(!svgElement) {
+            if (zoomSelect) { zoomSelect.value = prevZoom; generateSVG(); }
+            return;
+        }
+        
+        const clone = svgElement.cloneNode(true);
+        const hiddens = clone.querySelectorAll('.print-hidden');
+        hiddens.forEach(el => el.remove());
+        
+        const svgData = new XMLSerializer().serializeToString(clone);
+        const blob = new Blob([svgData], {type: "image/svg+xml;charset=utf-8"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "papercraft.svg";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        if (zoomSelect) {
+            zoomSelect.value = prevZoom;
+            generateSVG();
+        }
+        endDrag();
+    }
+
+    function exportDXF() {
+        snapGuides = { x: [], y: [] };
+        generateSVG();
+
+        let dxf = "";
+        dxf += "0\nSECTION\n2\nHEADER\n0\nENDSEC\n";
+        dxf += "0\nSECTION\n2\nTABLES\n";
+        dxf += "0\nTABLE\n2\nLTYPE\n70\n1\n";
+        dxf += "0\nLTYPE\n2\nCONTINUOUS\n70\n0\n3\nSolid line\n72\n65\n73\n0\n40\n0.0\n";
+        dxf += "0\nENDTAB\n";
+        dxf += "0\nTABLE\n2\nLAYER\n70\n2\n";
+        dxf += "0\nLAYER\n2\nCUT\n70\n0\n62\n7\n6\nCONTINUOUS\n";
+        dxf += "0\nLAYER\n2\nSCORE\n70\n0\n62\n1\n6\nCONTINUOUS\n";
+        dxf += "0\nENDTAB\n0\nENDSEC\n";
+        
+        dxf += "0\nSECTION\n2\nENTITIES\n";
+
+        function addLine(layer, x1, y1, x2, y2) {
+            const dx1 = x1 + 10;
+            const dy1 = -(y1 + 10);
+            const dx2 = x2 + 10;
+            const dy2 = -(y2 + 10);
+            dxf += `0\nLINE\n8\n${layer}\n10\n${dx1.toFixed(4)}\n20\n${dy1.toFixed(4)}\n30\n0.0\n11\n${dx2.toFixed(4)}\n21\n${dy2.toFixed(4)}\n31\n0.0\n`;
+        }
+
+        function parsePathToLines(pathStr, layer) {
+            const commands = pathStr.match(/[MLZ][^MLZ]*/g);
+            if(!commands) return;
+            let startX = 0, startY = 0;
+            let curX = 0, curY = 0;
+            for(let cmd of commands) {
+                let type = cmd.charAt(0);
+                let coords = cmd.slice(1).trim().split(/[\s,]+/).filter(v => v !== "").map(parseFloat);
+                if(type === 'M') {
+                    curX = coords[0]; curY = coords[1];
+                    startX = curX; startY = curY;
+                } else if(type === 'L') {
+                    for(let i=0; i<coords.length; i+=2) {
+                        let nx = coords[i], ny = coords[i+1];
+                        addLine(layer, curX, curY, nx, ny);
+                        curX = nx; curY = ny;
+                    }
+                } else if(type === 'Z') {
+                    addLine(layer, curX, curY, startX, startY);
+                    curX = startX; curY = startY;
+                }
+            }
+        }
+
+        const w = Math.max(1, parseFloat(document.getElementById('pc-width').value) || 1);
+        const d = Math.max(1, parseFloat(document.getElementById('pc-depth').value) || 1);
+        const h = Math.max(1, parseFloat(document.getElementById('pc-wallHeight').value) || 1);
+        const rh = Math.max(1, parseFloat(document.getElementById('pc-roofHeight').value) || 1);
+        const rz = parseFloat(document.getElementById('pc-roofOffset').value) || 0;
+        const g = 5;
+
+        const dF = d/2 - rz;
+        const dB = d/2 + rz;
+        const rLenF = Math.sqrt(dF*dF + rh*rh);
+        const rLenB = Math.sqrt(dB*dB + rh*rh);
+        const max_rl = Math.max(rLenF, rLenB);
+
+        const rl_1 = rLenB; 
+        const rl_3 = rLenF; 
+        let cutDY_1 = g * (rh / Math.max(0.1, dB)) + 2; 
+        let cutDY_3 = g * (rh / Math.max(0.1, dF)) + 2; 
+
+        const xLeft = g;
+        const xW1 = xLeft + w;
+        const xW2 = xW1 + d;
+        const xW3 = xW2 + w;
+        const xW4 = xW3 + d;
+
+        const yRoofTop1 = max_rl - rl_1 + g;
+        const yRoofTop3 = max_rl - rl_3 + g;
+        const yWallTop = g + max_rl;          
+        const yBottom = yWallTop + h;        
+        const yTrianglePeak = yWallTop - rh; 
+
+        const peak2_x = xW1 + d/2 + rz;
+        const peak4_x = xW3 + d/2 - rz;
+
+        const cutPath = `
+            M ${xLeft} ${yBottom} L ${xLeft} ${yWallTop}
+            L ${xLeft - g} ${yWallTop - cutDY_1} L ${xLeft - g} ${yRoofTop1 + g}
+            L ${xLeft} ${yRoofTop1} L ${xLeft + g} ${yRoofTop1 - g} L ${xW1 - g} ${yRoofTop1 - g}
+            L ${xW1} ${yRoofTop1} L ${xW1 + g} ${yRoofTop1 + g}
+            L ${xW1 + g} ${yWallTop - cutDY_1} L ${xW1} ${yWallTop}
+            L ${peak2_x} ${yTrianglePeak} L ${xW2} ${yWallTop}
+            L ${xW2 - g} ${yWallTop - cutDY_3} L ${xW2 - g} ${yRoofTop3 + g}
+            L ${xW2} ${yRoofTop3} L ${xW3} ${yRoofTop3}
+            L ${xW3 + g} ${yRoofTop3 + g}
+            L ${xW3 + g} ${yWallTop - cutDY_3} L ${xW3} ${yWallTop}
+            L ${peak4_x} ${yTrianglePeak} L ${xW4} ${yWallTop}
+            L ${xW4 + g} ${yWallTop + g} L ${xW4 + g} ${yBottom - g}
+            L ${xW4} ${yBottom} Z
+        `;
+
+        const foldPath = `
+            M ${xW1} ${yBottom} L ${xW1} ${yWallTop} M ${xW2} ${yBottom} L ${xW2} ${yWallTop}
+            M ${xW3} ${yBottom} L ${xW3} ${yWallTop} M ${xW4} ${yBottom} L ${xW4} ${yWallTop}
+            M ${xLeft} ${yWallTop} L ${xW1} ${yWallTop} M ${xW2} ${yWallTop} L ${xW3} ${yWallTop}
+            M ${xLeft} ${yRoofTop1} L ${xLeft} ${yWallTop} M ${xW1} ${yRoofTop1} L ${xW1} ${yWallTop}
+            M ${xW2} ${yRoofTop3} L ${xW2} ${yWallTop} M ${xW3} ${yRoofTop3} L ${xW3} ${yWallTop}
+            M ${xLeft} ${yRoofTop1} L ${xW1} ${yRoofTop1}
+        `;
+
+        parsePathToLines(cutPath, "CUT");
+        parsePathToLines(foldPath, "SCORE");
+
+        windows.forEach(win => {
+            const { mainPts, hingePts, extraPaths } = getTransformedPoints(win);
+            
+            function ptsToLines(pts, layer) {
+                if (!pts || pts.length < 2) return;
+                for(let i=0; i<pts.length-1; i++){
+                    addLine(layer, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y);
+                }
+            }
+            
+            if (mainPts && mainPts.length > 0) ptsToLines(mainPts, "CUT");
+            if (hingePts && hingePts.length > 0) ptsToLines(hingePts, "SCORE");
+            if (extraPaths && extraPaths.length > 0) {
+                extraPaths.forEach(p => ptsToLines(p, "CUT"));
+            }
+        });
+
+        dxf += "0\nENDSEC\n0\nEOF\n";
+
+        const blob = new Blob([dxf], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "papercraft.dxf";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        endDrag();
+    }
+
+    function printToPDF() {
+        const zoomSelect = document.getElementById('zoom-level');
+        const prevZoom = zoomSelect ? zoomSelect.value : '1';
+        if (zoomSelect) zoomSelect.value = '1';
+        snapGuides = { x: [], y: [] };
+        generateSVG();
+
+        const svgElement = document.getElementById('papercraft-svg');
+        if(!svgElement) {
+            if (zoomSelect) { zoomSelect.value = prevZoom; generateSVG(); }
+            return;
+        }
+        const w = parseFloat(svgElement.getAttribute('width'));
+        const h = parseFloat(svgElement.getAttribute('height'));
+        
+        const printWin = window.open('', '_blank');
+        printWin.document.write(`
+            <!DOCTYPE html><html><head><title>家展開図</title>
+            <style>
+                html, body { margin: 0; padding: 0; background: #fff; }
+                body { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+                svg { border: none; display: block; }
+                .print-hidden { display: none !important; }
+                @media print { 
+                    @page { size: ${w}mm ${h}mm; margin: 0; } 
+                    body { min-height: 0; display: block; overflow: hidden; }
+                    svg { width: ${w}mm; height: ${h}mm; }
+                }
+            </style></head><body>${svgElement.outerHTML}</body></html>
+        `);
+        printWin.document.close();
+        printWin.focus();
+        
+        setTimeout(() => { 
+            printWin.print(); 
+            if (zoomSelect) {
+                zoomSelect.value = prevZoom;
+                generateSVG();
+            }
+            endDrag(); 
+        }, 300);
+    }
+
+    function onWindowResize() {
+        const container = document.getElementById('canvas-container');
+        if (!container || !camera || !renderer) return;
+        
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        if (width === 0 || height === 0) return;
+
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        renderer.setSize(width, height);
+    }
+
+    function init3D() {
+        const container = document.getElementById('canvas-container');
+        if (typeof THREE === 'undefined') return;
+        
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xe0e0e0); 
+        
+        let width = container.clientWidth || 500;
+        let height = container.clientHeight || 620;
+
+        camera = new THREE.PerspectiveCamera(45, width / height, 1, 1000);
+        camera.position.set(150, 100, 200);
+        
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(width, height);
+        container.appendChild(renderer.domElement);
+        
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight.position.set(100, 200, 50);
+        scene.add(dirLight);
+        
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        houseGroup = new THREE.Group();
+        scene.add(houseGroup);
+
+        // --- ドラッグ変形用ハンドルの追加 ---
+        const handleGeom = new THREE.SphereGeometry(4, 16, 16);
+        handleSize = new THREE.Mesh(handleGeom, new THREE.MeshBasicMaterial({ color: 0xff3333, depthTest: false }));
+        handleSize.renderOrder = 1;
+        scene.add(handleSize);
+
+        handleRoof = new THREE.Mesh(handleGeom, new THREE.MeshBasicMaterial({ color: 0x3366ff, depthTest: false }));
+        handleRoof.renderOrder = 1;
+        scene.add(handleRoof);
+
+        dragControls = new THREE.DragControls([handleSize, handleRoof], camera, renderer.domElement);
+        dragControls.addEventListener('dragstart', () => { controls.enabled = false; });
+        dragControls.addEventListener('drag', function(event) {
+            let w = parseFloat(document.getElementById('pc-width').value);
+            let d = parseFloat(document.getElementById('pc-depth').value);
+            let h = parseFloat(document.getElementById('pc-wallHeight').value);
+            let rh = parseFloat(document.getElementById('pc-roofHeight').value);
+            let rz = parseFloat(document.getElementById('pc-roofOffset').value);
+
+            if (event.object === handleSize) {
+                w = Math.max(10, event.object.position.x * 2);
+                h = Math.max(10, event.object.position.y);
+                d = Math.max(10, event.object.position.z * 2);
+                document.getElementById('pc-width').value = Math.round(w);
+                document.getElementById('pc-depth').value = Math.round(d);
+                document.getElementById('pc-wallHeight').value = Math.round(h);
+            } else if (event.object === handleRoof) {
+                let maxRz = d / 2 - 1; // ズレの限界値を設定
+                let rzVal = Math.max(-maxRz, Math.min(maxRz, event.object.position.z));
+                event.object.position.z = rzVal;
+                rh = Math.max(5, event.object.position.y - h);
+                event.object.position.x = 0;
+                document.getElementById('pc-roofHeight').value = Math.round(rh);
+                document.getElementById('pc-roofOffset').value = Math.round(rzVal);
+            }
+
+            updateAll();
+        });
+        dragControls.addEventListener('dragend', () => { controls.enabled = true; });
+        // -----------------------------------
+
+        is3DInitialized = true;
+        
+        window.addEventListener('resize', onWindowResize, false);
+        setTimeout(onWindowResize, 100);
+
+        animate3D();
+    }
+
+    function update3D() {
+        if (!houseGroup) return;
+        while(houseGroup.children.length > 0){ 
+            let child = houseGroup.children[0];
+            if(child.geometry) child.geometry.dispose();
+            if(child.material) {
+                if(Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                else child.material.dispose();
+            }
+            houseGroup.remove(child); 
+        }
+
+        const w = Math.max(1, parseFloat(document.getElementById('pc-width').value) || 1);
+        const d = Math.max(1, parseFloat(document.getElementById('pc-depth').value) || 1);
+        const h = Math.max(1, parseFloat(document.getElementById('pc-wallHeight').value) || 1);
+        const rh = Math.max(1, parseFloat(document.getElementById('pc-roofHeight').value) || 1);
+        const rz = parseFloat(document.getElementById('pc-roofOffset').value) || 0;
+        const gVal = 5; 
+        
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff, roughness: 0.8, side: THREE.DoubleSide, 
+            polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1
+        });
+        const lineMaterial = new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 2 });
+
+        function addPolygon(vertices, colorHex = 0x333333) {
+            const geo = new THREE.BufferGeometry();
+            const pts = new Float32Array(vertices.length * 3);
+            for(let i=0; i<vertices.length; i++) {
+                pts[i*3] = vertices[i][0];
+                pts[i*3+1] = vertices[i][1];
+                pts[i*3+2] = vertices[i][2];
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+            
+            const indices = [];
+            for(let i=1; i<vertices.length-1; i++) {
+                indices.push(0, i, i+1);
+            }
+            geo.setIndex(indices);
+            geo.computeVertexNormals();
+
+            const mesh = new THREE.Mesh(geo, material);
+            const edges = new THREE.EdgesGeometry(geo);
+            const lines = new THREE.LineSegments(edges, lineMaterial);
+            mesh.add(lines);
+            houseGroup.add(mesh);
+        }
+
+        // 正面壁 (z = d/2)
+        addPolygon([ [-w/2, 0, d/2], [w/2, 0, d/2], [w/2, h, d/2], [-w/2, h, d/2] ]);
+        // 背面壁 (z = -d/2)
+        addPolygon([ [w/2, 0, -d/2], [-w/2, 0, -d/2], [-w/2, h, -d/2], [w/2, h, -d/2] ]);
+        // 右妻壁 (x = w/2)
+        addPolygon([ [w/2, 0, d/2], [w/2, 0, -d/2], [w/2, h, -d/2], [w/2, h+rh, rz], [w/2, h, d/2] ]);
+        // 左妻壁 (x = -w/2)
+        addPolygon([ [-w/2, 0, -d/2], [-w/2, 0, d/2], [-w/2, h, d/2], [-w/2, h+rh, rz], [-w/2, h, -d/2] ]);
+        // 前屋根
+        addPolygon([ [-w/2, h, d/2], [w/2, h, d/2], [w/2, h+rh, rz], [-w/2, h+rh, rz] ]);
+        // 後屋根
+        addPolygon([ [w/2, h, -d/2], [-w/2, h, -d/2], [-w/2, h+rh, rz], [w/2, h+rh, rz] ]);
+        // 底面
+        addPolygon([ [-w/2, 0, -d/2], [w/2, 0, -d/2], [w/2, 0, d/2], [-w/2, 0, d/2] ]);
+
+        const dF = d/2 - rz;
+        const dB = d/2 + rz;
+        const rLenF = Math.sqrt(dF*dF + rh*rh);
+        const rLenB = Math.sqrt(dB*dB + rh*rh);
+        const max_rl = Math.max(rLenF, rLenB);
+
+        const xL = gVal;
+        const x1 = xL + w;
+        const x2 = x1 + d;
+        const x3 = x2 + w;
+        const x4 = x3 + d;
+        const yWT = gVal + max_rl;
+        const yB = yWT + h;
+
+        function map2DTo3D(x, y, offset = 0.5) {
+            let out = new THREE.Vector3();
+            if (x < xL) x = xL; 
+            if (x > x4) x = x4;
+
+            let isWall = (y > yWT);
+            let yWall3D = yB - y; 
+
+            if (x <= x1) { 
+                // 面1: 背面壁 (Z = -d/2) + 後屋根
+                let lx = x - xL; 
+                if (isWall) {
+                    out.set(w/2 - lx, yWall3D, -d/2 - offset);
+                } else {
+                    let slantY = yWT - y; 
+                    let t = rLenB > 0 ? slantY / rLenB : 0; 
+                    let ny = rLenB > 0 ? dB / rLenB : 0;
+                    let nz = rLenB > 0 ? -rh / rLenB : 0; 
+                    out.set(w/2 - lx, h + t * rh + offset * ny, -d/2 + t * dB + offset * nz);
+                }
+            } else if (x <= x2) { 
+                // 面2: 左妻壁 (X = -w/2)
+                let lx = x - x1;
+                out.set(-w/2 - offset, yWall3D, -d/2 + lx);
+            } else if (x <= x3) { 
+                // 面3: 正面壁 (Z = d/2) + 前屋根
+                let lx = x - x2;
+                if (isWall) {
+                    out.set(-w/2 + lx, yWall3D, d/2 + offset);
+                } else {
+                    let slantY = yWT - y; 
+                    let t = rLenF > 0 ? slantY / rLenF : 0; 
+                    let ny = rLenF > 0 ? dF / rLenF : 0;
+                    let nz = rLenF > 0 ? rh / rLenF : 0; 
+                    out.set(-w/2 + lx, h + t * rh + offset * ny, d/2 - t * dF + offset * nz);
+                }
+            } else { 
+                // 面4: 右妻壁 (X = w/2)
+                let lx = x - x3;
+                out.set(w/2 + offset, yWall3D, d/2 - lx);
+            }
+            return out;
+        }
+
+        function create3DLineFrom2D(pts2d, colorHex) {
+            let pts3d = [];
+            const step = 1; 
+            for(let i = 0; i < pts2d.length - 1; i++) {
+                let p1 = pts2d[i];
+                let p2 = pts2d[i+1];
+                let dx = p2.x - p1.x;
+                let dy = p2.y - p1.y;
+                let dist = Math.sqrt(dx*dx + dy*dy);
+                let count = Math.max(1, Math.ceil(dist / step));
+                for(let j = 0; j < count; j++) {
+                    let tx = p1.x + dx * (j/count);
+                    let ty = p1.y + dy * (j/count);
+                    pts3d.push(map2DTo3D(tx, ty));
+                }
+            }
+            pts3d.push(map2DTo3D(pts2d[pts2d.length-1].x, pts2d[pts2d.length-1].y));
+            const geo = new THREE.BufferGeometry().setFromPoints(pts3d);
+            return new THREE.Line(geo, new THREE.LineBasicMaterial({ color: colorHex }));
+        }
+
+        windows.forEach(win => {
+            let obj3D = new THREE.Group();
+            const { mainPts, hingePts, extraPaths } = getTransformedPoints(win);
+
+            if (mainPts && mainPts.length > 0) {
+                obj3D.add(create3DLineFrom2D(mainPts, 0x000000));
+            }
+            if (hingePts && hingePts.length > 0) {
+                obj3D.add(create3DLineFrom2D(hingePts, 0xff00ff));
+            }
+            if (extraPaths && extraPaths.length > 0) {
+                extraPaths.forEach(p => {
+                    obj3D.add(create3DLineFrom2D(p, 0x000000));
+                });
+            }
+            houseGroup.add(obj3D);
+        });
+
+        // --- ハンドル位置の更新 ---
+        if (handleSize && handleRoof) {
+            handleSize.position.set(w/2, h, d/2);
+            handleRoof.position.set(0, h + rh, rz);
+        }
+        // --------------------------
+
+        controls.target.set(0, h/2, 0);
+    }
+
+    function animate3D() {
+        if (!is3DInitialized) return;
+        requestAnimationFrame(animate3D);
+        controls.update(); 
+        renderer.render(scene, camera);
+    }
+</script>
+</body>
+</html>
